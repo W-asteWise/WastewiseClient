@@ -93,6 +93,35 @@ export default function ReportPage() {
     });
   };
 
+  const extractJsonFromText = (text: string) => {
+    try {
+      // First attempt: try to parse the entire text
+      return JSON.parse(text);
+    } catch (e) {
+      try {
+        // Second attempt: try to find JSON object using regex
+        const jsonRegex = /{[\s\S]*}/;
+        const match = text.match(jsonRegex);
+        if (match) {
+          return JSON.parse(match[0]);
+        }
+      } catch (e2) {
+        try {
+          // Third attempt: try to extract from code blocks
+          const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)\s*```/;
+          const codeMatch = text.match(codeBlockRegex);
+          if (codeMatch && codeMatch[1]) {
+            return JSON.parse(codeMatch[1]);
+          }
+        } catch (e3) {
+          console.error("All JSON extraction attempts failed");
+          throw new Error("Could not extract valid JSON");
+        }
+      }
+    }
+    throw new Error("Could not extract valid JSON");
+  };
+
   const handleVerify = async () => {
     if (!file) return
 
@@ -118,7 +147,7 @@ export default function ReportPage() {
         2. An estimate of the quantity or amount (in kg or liters)
         3. Your confidence level in this assessment (as a percentage)
         
-        Respond in JSON format like this:
+        Respond with ONLY a JSON object like this, with no other text before or after:
         {
           "wasteType": "type of waste",
           "quantity": "estimated quantity with unit",
@@ -129,9 +158,13 @@ export default function ReportPage() {
       const response = await result.response;
       const text = response.text();
       
+      console.log("Raw AI response:", text);
+      
       try {
-        const parsedResult = JSON.parse(text);
-        if (parsedResult.wasteType && parsedResult.quantity && parsedResult.confidence) {
+        // Use the extraction helper
+        const parsedResult = extractJsonFromText(text);
+        
+        if (parsedResult && parsedResult.wasteType && parsedResult.quantity && parsedResult.confidence) {
           setVerificationResult(parsedResult);
           setVerificationStatus('success');
           setNewReport({
@@ -145,13 +178,16 @@ export default function ReportPage() {
         }
       } catch (error) {
         console.error('Failed to parse JSON response:', text);
+        console.error('Parse error details:', error);
         setVerificationStatus('failure');
+        toast.error('Failed to analyze image. Please try again.');
       }
     } catch (error) {
       console.error('Error verifying waste:', error);
       setVerificationStatus('failure');
+      toast.error('An error occurred during verification. Please try again.');
     }
-  }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -200,18 +236,38 @@ export default function ReportPage() {
     const checkUser = async () => {
       const email = localStorage.getItem('userEmail');
       if (email) {
-        let user = await getUserByEmail(email);
-        if (!user) {
-          user = await createUser(email, 'Anonymous User');
+        try {
+          let user = await getUserByEmail(email);
+          if (!user) {
+            user = await createUser(email, 'Anonymous User');
+          }
+          setUser(user);
+          
+          const recentReports = await getRecentReports();
+          console.log("Recent reports from DB:", recentReports);
+          
+          if (Array.isArray(recentReports)) {
+            const formattedReports = recentReports.map(report => ({
+              id: report.id,
+              location: report.location,
+              wasteType: report.wasteType,
+              amount: report.amount,
+              createdAt: report.createdAt instanceof Date 
+                ? report.createdAt.toISOString().split('T')[0]
+                : typeof report.createdAt === 'string' 
+                  ? report.createdAt.split('T')[0]
+                  : 'Unknown date'
+            }));
+            setReports(formattedReports);
+          } else {
+            console.error("Expected array for reports but got:", typeof recentReports);
+            toast.error("Failed to load recent reports");
+          }
+        } catch (error) {
+          console.error("Error in checkUser:", error);
+          toast.error("Something went wrong. Please try logging in again.");
+          router.push('/login');
         }
-        setUser(user);
-        
-        const recentReports = await getRecentReports();
-        const formattedReports = recentReports.map(report => ({
-          ...report,
-          createdAt: report.createdAt.toISOString().split('T')[0]
-        }));
-        setReports(formattedReports);
       } else {
         router.push('/login'); 
       }
@@ -360,29 +416,35 @@ export default function ReportPage() {
       <h2 className="text-3xl font-semibold mb-6 text-gray-800">Recent Reports</h2>
       <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
         <div className="max-h-96 overflow-y-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 sticky top-0">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {reports.map((report) => (
-                <tr key={report.id} className="hover:bg-gray-50 transition-colors duration-200">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    <MapPin className="inline-block w-4 h-4 mr-2 text-green-500" />
-                    {report.location}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.wasteType}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.amount}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.createdAt}</td>
+          {reports.length > 0 ? (
+            <table className="w-full">
+              <thead className="bg-gray-50 sticky top-0">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {reports.map((report) => (
+                  <tr key={report.id} className="hover:bg-gray-50 transition-colors duration-200">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <MapPin className="inline-block w-4 h-4 mr-2 text-green-500" />
+                      {report.location}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.wasteType}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.amount}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{report.createdAt}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="p-6 text-center text-gray-500">
+              No reports available yet. Be the first to report waste!
+            </div>
+          )}
         </div>
       </div>
     </div>
