@@ -1,9 +1,11 @@
 import Link from "next/link"
 import { usePathname } from 'next/navigation'
 import { Button } from "@/components/ui/button"
-import { MapPin, Trash, Coins, Medal, Settings, Home, Car } from "lucide-react"
+import { MapPin, Trash, Coins, Medal, Settings, Home, Car,User } from "lucide-react"
 
 const sidebarItems = [
+  { href: "https://wastewise-admin.netlify.app/", icon:User,label: "Admin Portal" },
+
   { href: "/", icon: Home, label: "Home" },
   { href: "/report", icon: MapPin, label: "Report Waste" },
   { href: "/collect", icon: Trash, label: "Collect Waste" },
